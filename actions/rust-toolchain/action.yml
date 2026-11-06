@@ -77,6 +77,8 @@ runs:
               ",".join(table.get("targets", [])) if own else "-", sep="|")
         PY
           )
+          # Windows Python ends lines with \r\n; drop the \r.
+          file_targets=${file_targets%$'\r'}
           [ "$file_components" = - ] || COMPONENTS="$COMPONENTS,$file_components"
           [ "$file_targets" = - ] || TARGETS="$TARGETS,$file_targets"
         fi
