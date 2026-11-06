@@ -51,11 +51,21 @@ jobs:
       - id: toolchain
         uses: ./actions/rust-toolchain
         with:
-          path: ${{ runner.temp }}
+          file: ${{ runner.temp }}/rust-toolchain.toml
           components: clippy
       - run: |
           [ "${{ steps.toolchain.outputs.toolchain }}" = 1.99.1 ]
           cargo clippy --version
+      - name: A pins file with another key
+        run: printf '[rust]\ntoolchain = "1.98.0"\n' > "$RUNNER_TEMP/release-pins.toml"
+      - id: pinned
+        uses: ./actions/rust-toolchain
+        with:
+          file: ${{ runner.temp }}/release-pins.toml
+          key: rust.toolchain
+      - run: |
+          [ "${{ steps.pinned.outputs.toolchain }}" = 1.98.0 ]
+          [ "$(cargo --version | cut -d' ' -f2)" = 1.98.0 ]
       - uses: ./actions/gpui-deps
       - uses: ./actions/self-hosted-prep
 

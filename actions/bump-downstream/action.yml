@@ -56,7 +56,7 @@ runs:
     - if: steps.check.outputs.enabled == 'true'
       uses: karyalabs/.github/actions/rust-toolchain@v1
       with:
-        path: ${{ format('{0}/bump-checkout', runner.temp) }}
+        file: ${{ format('{0}/bump-checkout/rust-toolchain.toml', runner.temp) }}
     - id: pr
       if: steps.check.outputs.enabled == 'true'
       shell: bash

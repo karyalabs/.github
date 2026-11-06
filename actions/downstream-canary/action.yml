@@ -51,7 +51,7 @@ runs:
         echo "Downstream: $REPOSITORY at $(git -C "$DIR" rev-parse --short HEAD)"
     - uses: karyalabs/.github/actions/rust-toolchain@v1
       with:
-        path: ${{ steps.dir.outputs.path }}
+        file: ${{ steps.dir.outputs.path }}/rust-toolchain.toml
     - name: Patch the upstream crates in
       shell: bash
       env:
