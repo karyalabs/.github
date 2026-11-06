@@ -1,0 +1,80 @@
+name: CI
+
+# Checks the shared actions on every pull request and push to main: every
+# action file parses, and the actions that need no secrets run once.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every action and workflow is valid YAML with the required keys
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = False
+          for path in sorted(glob.glob("actions/*/action.yml")):
+              action = yaml.safe_load(open(path))
+              for key in ("name", "description", "runs"):
+                  if key not in action:
+                      print(f"{path}: no {key}"); bad = True
+              print(f"ok {path}")
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              yaml.safe_load(open(path)); print(f"ok {path}")
+          sys.exit(bad)
+          PY
+      - id: runners
+        uses: ./actions/pick-runners
+        with:
+          linux: '["self-hosted","Linux","X64","matty"]'
+      - name: A trusted run picks the variable, the macOS fallback is macos-15
+        env:
+          LINUX: ${{ steps.runners.outputs.linux }}
+          MACOS: ${{ steps.runners.outputs.macos }}
+        run: |
+          [ "$LINUX" = '["self-hosted","Linux","X64","matty"]' ] || [ "${{ github.event.pull_request.head.repo.full_name != github.repository }}" = true ]
+          [ "$MACOS" = '"macos-15"' ]
+      - name: A toolchain file to read
+        run: printf '[toolchain]\nchannel = "1.99.1"\n' > "$RUNNER_TEMP/rust-toolchain.toml"
+      - id: toolchain
+        uses: ./actions/rust-toolchain
+        with:
+          file: ${{ runner.temp }}/rust-toolchain.toml
+          components: clippy
+      - run: |
+          [ "${{ steps.toolchain.outputs.toolchain }}" = 1.99.1 ]
+          cargo clippy --version
+      - name: A pins file with another key
+        run: printf '[rust]\ntoolchain = "1.98.0"\n' > "$RUNNER_TEMP/release-pins.toml"
+      - id: pinned
+        uses: ./actions/rust-toolchain
+        with:
+          file: ${{ runner.temp }}/release-pins.toml
+          key: rust.toolchain
+      - run: |
+          [ "${{ steps.pinned.outputs.toolchain }}" = 1.98.0 ]
+          [ "$(cargo --version | cut -d' ' -f2)" = 1.98.0 ]
+      - uses: ./actions/gpui-deps
+      - uses: ./actions/self-hosted-prep
+
+  ci:
+    if: ${{ !cancelled() }}
+    needs: [smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULT: ${{ needs.smoke.result }}
+        run: '[ "$RESULT" = success ]'

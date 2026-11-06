@@ -1,0 +1,51 @@
+name: Pick the runners
+description: >-
+  Turns the organization's runner variables into runs-on values. Pass
+  vars.KARYA_LINUX_RUNNER and vars.KARYA_MACOS_RUNNER (a JSON list of labels
+  such as ["self-hosted","Linux","X64","matty"], or one label). Unset, or for
+  a pull request from a fork, the jobs get GitHub's runners, so deleting a
+  variable is the way back when a machine is down and outside code never
+  runs on Karya's machines. Use the outputs as
+  runs-on: fromJSON(needs.<job>.outputs.linux).
+inputs:
+  linux:
+    description: The Linux runner variable.
+    default: ""
+  macos:
+    description: The macOS runner variable.
+    default: ""
+  linux-fallback:
+    default: ubuntu-latest
+  macos-fallback:
+    # The organization rejects macos-14.
+    default: macos-15
+outputs:
+  linux:
+    value: ${{ steps.pick.outputs.linux }}
+  macos:
+    value: ${{ steps.pick.outputs.macos }}
+runs:
+  using: composite
+  steps:
+    - id: pick
+      shell: bash
+      env:
+        LINUX: ${{ inputs.linux }}
+        MACOS: ${{ inputs.macos }}
+        LINUX_FALLBACK: ${{ inputs.linux-fallback }}
+        MACOS_FALLBACK: ${{ inputs.macos-fallback }}
+        TRUSTED: ${{ !startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository }}
+      run: |
+        set -euo pipefail
+        pick() {
+          local value="$1" fallback="$2"
+          if [[ "$TRUSTED" != true || -z "$value" ]]; then
+            value="$fallback"
+          fi
+          # A JSON list or string stays as it is; a bare label is quoted.
+          jq -ce . <<<"$value" 2>/dev/null || jq -cn --arg v "$value" '$v'
+        }
+        {
+          echo "linux=$(pick "$LINUX" "$LINUX_FALLBACK")"
+          echo "macos=$(pick "$MACOS" "$MACOS_FALLBACK")"
+        } | tee -a "$GITHUB_OUTPUT"

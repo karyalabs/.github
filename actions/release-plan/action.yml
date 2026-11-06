@@ -1,0 +1,71 @@
+name: Plan a release
+description: >-
+  Decides whether this push to the default branch is a release. Merging a
+  version bump is the release: when v<version> is already fully released
+  (tag, every crate on crates.io, a published GitHub release), nothing
+  happens. When an earlier run tagged it and then failed, the release is
+  finished from the tagged commit. Run it after actions/checkout.
+inputs:
+  crates:
+    description: The crates this repository publishes, separated by spaces.
+    required: true
+  version:
+    description: >-
+      The version to release. Default: [workspace.package] or [package]
+      version in the root Cargo.toml.
+    default: ""
+outputs:
+  release:
+    description: "'true' when there is something to release."
+    value: ${{ steps.plan.outputs.release }}
+  version:
+    value: ${{ steps.plan.outputs.version }}
+  tag:
+    value: ${{ steps.plan.outputs.tag }}
+  sha:
+    description: The commit to release from.
+    value: ${{ steps.plan.outputs.sha }}
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      env:
+        CRATES: ${{ inputs.crates }}
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        version="$VERSION"
+        if [ -z "$version" ]; then
+          version="$(python3 -c 'import tomllib; t = tomllib.load(open("Cargo.toml", "rb")); print(t.get("workspace", {}).get("package", {}).get("version") or t["package"]["version"])')"
+        fi
+        tag="v$version"
+        sha="$(git rev-parse HEAD)"
+        published() {
+          curl -fsS -o /dev/null -A "karyalabs-release (https://github.com/$GITHUB_REPOSITORY)" \
+            "https://crates.io/api/v1/crates/$1/$2"
+        }
+        all_published=true
+        for crate in $CRATES; do
+          published "$crate" "$version" || all_published=false
+        done
+        # The peeled line (^{}) of an annotated tag comes last.
+        tagged="$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}" | tail -n 1 | cut -f 1)"
+        if [ -n "$tagged" ] && [ "$all_published" = true ] \
+          && [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+          echo "$tag is fully released already; bump the version to release again."
+          echo "release=false" >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -n "$tagged" ] && [ "$tagged" != "$sha" ]; then
+          echo "Finishing $tag from ${tagged:0:7}, where it was tagged."
+          sha="$tagged"
+        fi
+        echo "Releasing $tag from ${sha:0:7}"
+        {
+          echo "release=true"
+          echo "version=$version"
+          echo "tag=$tag"
+          echo "sha=$sha"
+        } >>"$GITHUB_OUTPUT"

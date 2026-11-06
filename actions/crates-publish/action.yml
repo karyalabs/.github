@@ -1,0 +1,37 @@
+name: Publish to crates.io
+description: >-
+  Publishes the crates in order, skipping any already on crates.io at that
+  version, so a re-run is safe. Uses crates.io Trusted Publishing unless a
+  token is passed; the calling job needs `id-token: write`, and its own
+  workflow file is the one crates.io trusts (a composite action keeps it so).
+inputs:
+  crates:
+    description: The crates to publish, in order, separated by spaces.
+    required: true
+  version:
+    required: true
+  token:
+    description: A crates.io token, only when Trusted Publishing is not set up.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - id: auth
+      if: inputs.token == ''
+      uses: rust-lang/crates-io-auth-action@v1
+    - shell: bash
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ inputs.token || steps.auth.outputs.token }}
+        CRATES: ${{ inputs.crates }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        for crate in $CRATES; do
+          if curl -fsS -o /dev/null -A "karyalabs-release (https://github.com/$GITHUB_REPOSITORY)" \
+            "https://crates.io/api/v1/crates/$crate/$VERSION"; then
+            echo "$crate $VERSION is already on crates.io"
+          else
+            # Cargo waits until the crate is in the index before the next one.
+            cargo publish -p "$crate" --locked
+          fi
+        done
