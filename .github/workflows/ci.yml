@@ -47,7 +47,7 @@ jobs:
           [ "$LINUX" = '["self-hosted","Linux","X64","matty"]' ] || [ "${{ github.event.pull_request.head.repo.full_name != github.repository }}" = true ]
           [ "$MACOS" = '"macos-15"' ]
       - name: A toolchain file to read
-        run: printf '[toolchain]\nchannel = "1.99.1"\n' > "$RUNNER_TEMP/rust-toolchain.toml"
+        run: printf '[toolchain]\nchannel = "1.99.1"\ncomponents = ["rustfmt"]\n' > "$RUNNER_TEMP/rust-toolchain.toml"
       - id: toolchain
         uses: ./actions/rust-toolchain
         with:
@@ -56,6 +56,7 @@ jobs:
       - run: |
           [ "${{ steps.toolchain.outputs.toolchain }}" = 1.99.1 ]
           cargo clippy --version
+          cargo fmt --version
       - name: A pins file with another key
         run: printf '[rust]\ntoolchain = "1.98.0"\n' > "$RUNNER_TEMP/release-pins.toml"
       - id: pinned

@@ -3,7 +3,8 @@ description: >-
   Installs the Rust toolchain the repository pins (the channel in
   rust-toolchain.toml, or another TOML file and key), or the `toolchain`
   input for an MSRV or nightly job, with rustup, plus extra components and
-  targets, and makes it the one cargo uses.
+  targets, and makes it the one cargo uses. A rust-toolchain.toml's own
+  components and targets are installed too.
 inputs:
   file:
     description: The TOML file that pins the toolchain.
@@ -46,6 +47,16 @@ runs:
         import functools, sys, tomllib
         print(functools.reduce(lambda t, k: t[k], sys.argv[2].split("."), tomllib.load(open(sys.argv[1], "rb"))))
         ' "$FILE" "$KEY")"
+          # A rust-toolchain.toml's own components and targets come too.
+          if [ "$KEY" = toolchain.channel ]; then
+            extra="$(python3 -c '
+        import sys, tomllib
+        t = tomllib.load(open(sys.argv[1], "rb"))["toolchain"]
+        print(" ".join(t.get("components", [])), "|", " ".join(t.get("targets", [])))
+        ' "$FILE")"
+            COMPONENTS="$COMPONENTS ${extra%%|*}"
+            TARGETS="$TARGETS ${extra#*|}"
+          fi
         fi
         if ! command -v rustup >/dev/null; then
           curl --proto '=https' --tlsv1.2 -sSf --retry 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
