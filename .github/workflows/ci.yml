@@ -4,6 +4,7 @@ name: CI
 # action file parses, and the actions that need no secrets run once.
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -16,11 +17,19 @@ permissions:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Every action and workflow is valid YAML with the required keys
+        if: runner.os == 'Linux'
         run: |
           python3 - <<'PY'
           import glob, sys, yaml
