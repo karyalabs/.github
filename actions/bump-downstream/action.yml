@@ -14,6 +14,12 @@ inputs:
     required: true
   version:
     required: true
+  toolchain-file:
+    description: The downstream file that pins its toolchain.
+    default: rust-toolchain.toml
+  toolchain-key:
+    description: The dotted key in that file.
+    default: toolchain.channel
   app-id:
     default: ""
   private-key:
@@ -56,7 +62,8 @@ runs:
     - if: steps.check.outputs.enabled == 'true'
       uses: karyalabs/.github/actions/rust-toolchain@v1
       with:
-        file: ${{ format('{0}/bump-checkout/rust-toolchain.toml', runner.temp) }}
+        file: ${{ format('{0}/bump-checkout/{1}', runner.temp, inputs.toolchain-file) }}
+        key: ${{ inputs.toolchain-key }}
     - id: pr
       if: steps.check.outputs.enabled == 'true'
       shell: bash
