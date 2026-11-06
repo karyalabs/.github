@@ -7,8 +7,11 @@ description: >-
   it grows past the limit. Does nothing on GitHub's runners.
 inputs:
   target-max-gb:
-    description: Remove target/ when it holds more than this many GB.
-    default: "60"
+    description: >-
+      Remove target/ when it holds more than this many GB. Empty means the
+      runner's KARYA_CI_TARGET_MAX_GB (set in the runner folder's .env), or
+      60.
+    default: ""
 runs:
   using: composite
   steps:
@@ -18,6 +21,7 @@ runs:
         MAX_GB: ${{ inputs.target-max-gb }}
       run: |
         set -euo pipefail
+        MAX_GB="${MAX_GB:-${KARYA_CI_TARGET_MAX_GB:-${MATTY_CI_TARGET_MAX_GB:-60}}}"
         git clean -ffdx -e /target/
         rm -rf target/dist
         if [[ -d target ]]; then
