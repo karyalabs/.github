@@ -46,7 +46,7 @@ runs:
           # Python 3.9 (macOS's own python3) has no tomllib, so a small
           # reader covers the `key = "value"` and `key = ["a", "b"]` lines
           # toolchain files hold.
-          IFS='|' read -r TOOLCHAIN file_components file_targets < <(python3 - "$FILE" "$KEY" <<'PY'
+          IFS='|' read -r TOOLCHAIN file_components file_targets < <("$(command -v python3 || command -v python)" - "$FILE" "$KEY" <<'PY'
         import re, sys
         path, key = sys.argv[1:]
         try:
