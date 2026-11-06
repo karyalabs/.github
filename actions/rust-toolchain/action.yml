@@ -3,7 +3,8 @@ description: >-
   Installs the Rust toolchain the repository pins (the channel in
   rust-toolchain.toml, or another TOML file and key), or the `toolchain`
   input for an MSRV or nightly job, with rustup, plus extra components and
-  targets, and makes it the one cargo uses.
+  targets, and makes it the one cargo uses. A rust-toolchain.toml's own
+  components and targets are installed too.
 inputs:
   file:
     description: The TOML file that pins the toolchain.
@@ -42,10 +43,42 @@ runs:
             echo "::error::No $FILE and no toolchain input."
             exit 1
           fi
-          TOOLCHAIN="$(python3 -c '
-        import functools, sys, tomllib
-        print(functools.reduce(lambda t, k: t[k], sys.argv[2].split("."), tomllib.load(open(sys.argv[1], "rb"))))
-        ' "$FILE" "$KEY")"
+          # Python 3.9 (macOS's own python3) has no tomllib, so a small
+          # reader covers the `key = "value"` and `key = ["a", "b"]` lines
+          # toolchain files hold.
+          IFS='|' read -r TOOLCHAIN file_components file_targets < <(python3 - "$FILE" "$KEY" <<'PY'
+        import re, sys
+        path, key = sys.argv[1:]
+        try:
+            import tomllib
+            data = tomllib.load(open(path, "rb"))
+        except ImportError:
+            data, table = {}, {}
+            data_root = data
+            for line in open(path):
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                m = re.fullmatch(r"\[([^\]]+)\]", line)
+                if m:
+                    table = data_root
+                    for part in m.group(1).strip().split("."):
+                        table = table.setdefault(part, {})
+                    continue
+                k, _, v = (x.strip() for x in line.partition("="))
+                table[k] = re.findall(r'"([^"]*)"', v) if v.startswith("[") else v.strip('"')
+        *parents, last = key.split(".")
+        table = data
+        for part in parents:
+            table = table[part]
+        own = key == "toolchain.channel"
+        print(table[last],
+              ",".join(table.get("components", [])) if own else "-",
+              ",".join(table.get("targets", [])) if own else "-", sep="|")
+        PY
+          )
+          [ "$file_components" = - ] || COMPONENTS="$COMPONENTS,$file_components"
+          [ "$file_targets" = - ] || TARGETS="$TARGETS,$file_targets"
         fi
         if ! command -v rustup >/dev/null; then
           curl --proto '=https' --tlsv1.2 -sSf --retry 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
