@@ -22,6 +22,9 @@ inputs:
   command:
     description: What to run in the downstream checkout.
     default: cargo check --workspace --all-targets
+  cache:
+    description: Cache the downstream target/ with Swatinem/rust-cache.
+    default: "true"
 outputs:
   path:
     description: Where the downstream checkout is.
@@ -84,6 +87,12 @@ runs:
         # The build resolves the patched crates; everything else keeps its
         # locked version.
         git -C "$DIR" diff
+    - if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: ${{ steps.dir.outputs.path }} -> target
+        shared-key: canary
+        save-if: ${{ github.ref_name == github.event.repository.default_branch }}
     - name: Build the downstream repository
       shell: bash
       working-directory: ${{ steps.dir.outputs.path }}
