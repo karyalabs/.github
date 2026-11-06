@@ -1,0 +1,112 @@
+name: Bump a downstream pin
+description: >-
+  After a release, opens (or updates) a pull request in a downstream
+  repository that moves its requirement on the crate to the new version and
+  updates Cargo.lock, so the consumer's own CI checks the release. Needs the
+  Karya bot GitHub App (organization secrets KARYA_BOT_APP_ID and
+  KARYA_BOT_PRIVATE_KEY); without them it only writes a notice.
+inputs:
+  repository:
+    description: The downstream repository, owner/name.
+    required: true
+  crate:
+    description: The crate that was released, by package name.
+    required: true
+  version:
+    required: true
+  app-id:
+    default: ""
+  private-key:
+    default: ""
+outputs:
+  pull-request:
+    description: The pull request's URL.
+    value: ${{ steps.pr.outputs.url }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        HAS_APP: ${{ inputs.app-id != '' && inputs.private-key != '' }}
+        REPOSITORY: ${{ inputs.repository }}
+        CRATE: ${{ inputs.crate }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        if [ "$HAS_APP" != true ]; then
+          echo "::notice::No Karya bot app configured: open the $REPOSITORY bump to $CRATE $VERSION by hand."
+        fi
+        echo "enabled=$HAS_APP" >>"$GITHUB_OUTPUT"
+        echo "name=${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
+        echo "dir=$RUNNER_TEMP/bump/${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
+    - id: token
+      if: steps.check.outputs.enabled == 'true'
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ steps.check.outputs.name }}
+    - if: steps.check.outputs.enabled == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repository }}
+        token: ${{ steps.token.outputs.token }}
+        path: ${{ format('{0}/bump-checkout', runner.temp) }}
+    - if: steps.check.outputs.enabled == 'true'
+      uses: karyalabs/.github/actions/rust-toolchain@v1
+      with:
+        path: ${{ format('{0}/bump-checkout', runner.temp) }}
+    - id: pr
+      if: steps.check.outputs.enabled == 'true'
+      shell: bash
+      working-directory: ${{ format('{0}/bump-checkout', runner.temp) }}
+      env:
+        GH_TOKEN: ${{ steps.token.outputs.token }}
+        APP_SLUG: ${{ steps.token.outputs.app-slug }}
+        REPOSITORY: ${{ inputs.repository }}
+        CRATE: ${{ inputs.crate }}
+        VERSION: ${{ inputs.version }}
+        UPSTREAM: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        python3 - Cargo.toml "$CRATE" "$VERSION" <<'PY'
+        import re, sys
+        manifest, crate, version = sys.argv[1:]
+        text = open(manifest).read()
+        name = re.escape(crate)
+        text, plain = re.subn(
+            rf'^(\s*{name}\s*=\s*")(=?)[^"]*(")', rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
+        text, table = re.subn(
+            rf'^(\s*{name}\s*=\s*\{{[^}}\n]*\bversion\s*=\s*")(=?)[^"]*(")',
+            rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
+        if plain + table == 0:
+            sys.exit(f"No requirement on {crate} in {manifest}")
+        open(manifest, "w").write(text)
+        PY
+        # The crates.io index can lag the publish by a minute or two.
+        for attempt in $(seq 1 20); do
+          cargo update -p "$CRATE" && break
+          [ "$attempt" = 20 ] && exit 1
+          sleep 30
+        done
+        if git diff --quiet; then
+          echo "$REPOSITORY already uses $CRATE $VERSION"
+          exit 0
+        fi
+        branch="bump/$CRATE-$VERSION"
+        bot_id="$(gh api "/users/$APP_SLUG%5Bbot%5D" --jq .id)"
+        git config user.name "$APP_SLUG[bot]"
+        git config user.email "$bot_id+$APP_SLUG[bot]@users.noreply.github.com"
+        git switch -c "$branch"
+        git commit -qam "Update $CRATE to $VERSION"
+        git push --force origin "$branch"
+        notes="https://github.com/$UPSTREAM/releases/tag/v$VERSION"
+        body="$(printf 'Moves %s to %s, released by %s.\n\nRelease notes: %s\n\nOpened by the release workflow of %s. Merge it once `ci` is green; fix any break here before the next release.\n' \
+          "\`$CRATE\`" "$VERSION" "$UPSTREAM" "$notes" "$UPSTREAM")"
+        url="$(gh pr list --repo "$REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+        if [ -z "$url" ]; then
+          url="$(gh pr create --repo "$REPOSITORY" --head "$branch" --title "Update $CRATE to $VERSION" --body "$body")"
+        fi
+        echo "url=$url" >>"$GITHUB_OUTPUT"
+        echo "::notice::Bump pull request: $url"

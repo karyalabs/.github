@@ -1,0 +1,60 @@
+name: Rust toolchain
+description: >-
+  Installs the Rust toolchain named in the repository's rust-toolchain.toml
+  (or the `toolchain` input, for an MSRV or nightly job) with rustup, plus
+  extra components and targets, and makes it the one cargo uses.
+inputs:
+  path:
+    description: The directory whose rust-toolchain.toml to read.
+    default: "."
+  toolchain:
+    description: A toolchain to use instead of rust-toolchain.toml's channel.
+    default: ""
+  components:
+    description: Extra components, separated by commas or spaces.
+    default: ""
+  targets:
+    description: Extra targets, separated by commas or spaces.
+    default: ""
+outputs:
+  toolchain:
+    description: The toolchain that was installed.
+    value: ${{ steps.install.outputs.toolchain }}
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        DIR: ${{ inputs.path }}
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        set -euo pipefail
+        if [ -z "$TOOLCHAIN" ]; then
+          if [ ! -f "$DIR/rust-toolchain.toml" ]; then
+            echo "::error::No rust-toolchain.toml in $DIR and no toolchain input."
+            exit 1
+          fi
+          TOOLCHAIN="$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["toolchain"]["channel"])' "$DIR/rust-toolchain.toml")"
+        fi
+        if ! command -v rustup >/dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf --retry 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        args=(--profile minimal --no-self-update)
+        for c in ${COMPONENTS//,/ }; do args+=(--component "$c"); done
+        for t in ${TARGETS//,/ }; do args+=(--target "$t"); done
+        # rustup retries downloads itself; the loop covers a failed index fetch.
+        for attempt in 1 2 3; do
+          rustup toolchain install "$TOOLCHAIN" "${args[@]}" && break
+          [ "$attempt" = 3 ] && exit 1
+          sleep $((attempt * 10))
+        done
+        # RUSTUP_TOOLCHAIN wins over rust-toolchain.toml, so an MSRV job
+        # really builds with the MSRV.
+        echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >>"$GITHUB_ENV"
+        echo "toolchain=$TOOLCHAIN" >>"$GITHUB_OUTPUT"
+        RUSTUP_TOOLCHAIN="$TOOLCHAIN" rustc --version

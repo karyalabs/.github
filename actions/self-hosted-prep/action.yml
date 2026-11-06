@@ -1,0 +1,31 @@
+name: Prepare a self-hosted workspace
+description: >-
+  Run right after actions/checkout with `clean: false`. A self-hosted runner
+  reuses its checkout so target/ stays warm; this clears everything else a
+  previous job left (untracked and ignored files outside target/, and
+  target/dist so a job never uploads an older build), and drops target/ once
+  it grows past the limit. Does nothing on GitHub's runners.
+inputs:
+  target-max-gb:
+    description: Remove target/ when it holds more than this many GB.
+    default: "60"
+runs:
+  using: composite
+  steps:
+    - if: runner.environment == 'self-hosted'
+      shell: bash
+      env:
+        MAX_GB: ${{ inputs.target-max-gb }}
+      run: |
+        set -euo pipefail
+        git clean -ffdx -e /target/
+        rm -rf target/dist
+        if [[ -d target ]]; then
+          used_kb="$(du -sk target | cut -f1)"
+          echo "target/ holds $((used_kb / 1024 / 1024)) GB (limit ${MAX_GB} GB)"
+          if ((used_kb > MAX_GB * 1024 * 1024)); then
+            echo "Removing target/ to free disk space; this build starts cold"
+            rm -rf target
+          fi
+        fi
+        df -h . | tail -n 1

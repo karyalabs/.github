@@ -1,0 +1,29 @@
+name: GPUI Linux libraries
+description: >-
+  Installs the Debian packages GPUI needs to build and test on Linux, plus
+  any extra ones, and only those missing. Self-hosted runners have them
+  preinstalled, so there it runs no sudo at all. Does nothing off Linux.
+inputs:
+  extra:
+    description: More packages, separated by spaces.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      shell: bash
+      env:
+        EXTRA: ${{ inputs.extra }}
+      run: |
+        set -euo pipefail
+        # shellcheck disable=SC2206
+        packages=(libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+          libfontconfig-dev libvulkan-dev libx11-xcb-dev libxcb1-dev $EXTRA)
+        if status="$(dpkg-query -W -f='${db:Status-Status}\n' "${packages[@]}" 2>/dev/null)" &&
+          ! grep -qv '^installed$' <<<"$status"; then
+          echo "Already installed: ${packages[*]}"
+          exit 0
+        fi
+        echo "Installing: ${packages[*]}"
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends "${packages[@]}"

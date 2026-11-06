@@ -1,0 +1,95 @@
+name: Downstream canary
+description: >-
+  Builds a downstream repository against this checkout, so an upstream
+  change that breaks a consumer shows up before it is released. Checks out
+  the downstream repository's default branch, points its requirement on
+  each patched crate at this checkout's version, adds a [patch.crates-io]
+  entry for it, and runs the command there. Run it after actions/checkout
+  of the upstream repository; GPUI's Linux libraries must be installed when
+  the downstream crates need them.
+inputs:
+  repository:
+    description: The downstream repository, owner/name.
+    required: true
+  ref:
+    description: The downstream branch or commit. Default its default branch.
+    default: ""
+  crates:
+    description: >-
+      The upstream crates to patch in, by package name, separated by spaces.
+      Each must be a member of this checkout's workspace.
+    required: true
+  command:
+    description: What to run in the downstream checkout.
+    default: cargo check --workspace --all-targets
+outputs:
+  path:
+    description: Where the downstream checkout is.
+    value: ${{ steps.dir.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: dir
+      shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+      run: echo "path=$RUNNER_TEMP/canary/${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
+    - shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+        REF: ${{ inputs.ref }}
+        DIR: ${{ steps.dir.outputs.path }}
+      run: |
+        set -euo pipefail
+        rm -rf "$DIR"
+        args=(--depth 1)
+        [ -n "$REF" ] && args+=(--branch "$REF")
+        git clone "${args[@]}" "https://github.com/$REPOSITORY.git" "$DIR"
+        echo "Downstream: $REPOSITORY at $(git -C "$DIR" rev-parse --short HEAD)"
+    - uses: karyalabs/.github/actions/rust-toolchain@v1
+      with:
+        path: ${{ steps.dir.outputs.path }}
+    - name: Patch the upstream crates in
+      shell: bash
+      env:
+        CRATES: ${{ inputs.crates }}
+        DIR: ${{ steps.dir.outputs.path }}
+      run: |
+        set -euo pipefail
+        cargo metadata --no-deps --format-version 1 >"$RUNNER_TEMP/upstream-metadata.json"
+        python3 - "$RUNNER_TEMP/upstream-metadata.json" "$DIR/Cargo.toml" $CRATES <<'PY'
+        import json, os, re, sys
+        metadata, manifest, *crates = sys.argv[1:]
+        packages = {p["name"]: p for p in json.load(open(metadata))["packages"]}
+        text = open(manifest).read()
+        patch = ["", "# Added by the downstream canary.", "[patch.crates-io]"]
+        for crate in crates:
+            package = packages[crate]
+            version = package["version"]
+            path = os.path.dirname(package["manifest_path"])
+            # `name = "req"` or `name = { ..., version = "req", ... }`, in any
+            # dependency table; the `=` of an exact pin is kept.
+            name = re.escape(crate)
+            text, plain = re.subn(
+                rf'^(\s*{name}\s*=\s*")(=?)[^"]*(")', rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
+            text, table = re.subn(
+                rf'^(\s*{name}\s*=\s*\{{[^}}\n]*\bversion\s*=\s*")(=?)[^"]*(")',
+                rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
+            print(f"{crate}: {plain + table} requirement(s) set to {version}, patched to {path}")
+            patch.append(f'{crate} = {{ path = "{path}" }}')
+        if "[patch.crates-io]" in text:
+            sys.exit("The downstream manifest already has [patch.crates-io]; merge by hand.")
+        open(manifest, "w").write(text.rstrip("\n") + "\n" + "\n".join(patch) + "\n")
+        PY
+        # The build resolves the patched crates; everything else keeps its
+        # locked version.
+        git -C "$DIR" diff
+    - name: Build the downstream repository
+      shell: bash
+      working-directory: ${{ steps.dir.outputs.path }}
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+        echo "+ $COMMAND"
+        eval "$COMMAND"
