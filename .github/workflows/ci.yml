@@ -1,12 +1,11 @@
 name: CI
 
-# Checks the shared actions on every pull request and push to main: every
-# action file parses, and the actions that need no secrets run once.
+# Checks the shared actions on every pull request and in the merge queue:
+# every action file parses, and the actions that need no secrets run once.
+# No push trigger: the queue lands exactly the commit it checked.
 on:
   pull_request:
   merge_group:
-  push:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
