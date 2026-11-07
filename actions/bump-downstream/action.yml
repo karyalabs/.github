@@ -44,7 +44,6 @@ runs:
         fi
         echo "enabled=$HAS_APP" >>"$GITHUB_OUTPUT"
         echo "name=${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
-        echo "dir=$RUNNER_TEMP/bump/${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
     - id: token
       if: steps.check.outputs.enabled == 'true'
       uses: actions/create-github-app-token@v1
@@ -58,16 +57,17 @@ runs:
       with:
         repository: ${{ inputs.repository }}
         token: ${{ steps.token.outputs.token }}
-        path: ${{ format('{0}/bump-checkout', runner.temp) }}
+        # actions/checkout only writes under the workspace.
+        path: .karya-bump
     - if: steps.check.outputs.enabled == 'true'
       uses: karyalabs/.github/actions/rust-toolchain@v1
       with:
-        file: ${{ format('{0}/bump-checkout/{1}', runner.temp, inputs.toolchain-file) }}
+        file: ${{ format('{0}/.karya-bump/{1}', github.workspace, inputs.toolchain-file) }}
         key: ${{ inputs.toolchain-key }}
     - id: pr
       if: steps.check.outputs.enabled == 'true'
       shell: bash
-      working-directory: ${{ format('{0}/bump-checkout', runner.temp) }}
+      working-directory: ${{ format('{0}/.karya-bump', github.workspace) }}
       env:
         GH_TOKEN: ${{ steps.token.outputs.token }}
         APP_SLUG: ${{ steps.token.outputs.app-slug }}
