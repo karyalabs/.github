@@ -43,6 +43,9 @@ jobs:
               yaml.safe_load(open(path)); print(f"ok {path}")
           sys.exit(bad)
           PY
+      - name: bump-downstream moves the crate and the pins it shares
+        if: runner.os == 'Linux'
+        run: python3 -I actions/bump-downstream/test_bump.py
       - id: runners
         uses: ./actions/pick-runners
         with:
