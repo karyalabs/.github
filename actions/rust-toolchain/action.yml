@@ -82,17 +82,33 @@ runs:
           [ "$file_components" = - ] || COMPONENTS="$COMPONENTS,$file_components"
           [ "$file_targets" = - ] || TARGETS="$TARGETS,$file_targets"
         fi
+        # A self-hosted runner's PATH may not hold ~/.cargo/bin even though
+        # rustup is there. Reinstalling it then rewrites the cargo and rustc
+        # proxies, and another job on the same machine that runs cargo at
+        # that moment fails with "Text file busy" (matty#844).
+        cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
         if ! command -v rustup >/dev/null; then
-          curl --proto '=https' --tlsv1.2 -sSf --retry 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
-          export PATH="$HOME/.cargo/bin:$PATH"
+          if [ ! -x "$cargo_bin/rustup" ] && [ ! -x "$cargo_bin/rustup.exe" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf --retry 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          echo "$cargo_bin" >>"$GITHUB_PATH"
+          export PATH="$cargo_bin:$PATH"
         fi
         args=(--profile minimal --no-self-update)
         for c in ${COMPONENTS//,/ }; do args+=(--component "$c"); done
         for t in ${TARGETS//,/ }; do args+=(--target "$t"); done
         # rustup retries downloads itself; the loop covers a failed index fetch.
+        # Jobs on one machine share rustup's home; one install at a time.
+        # (macOS has no flock, and no "Text file busy" either.)
+        locked() {
+          if command -v flock >/dev/null; then
+            flock "${RUSTUP_HOME:-$HOME/.rustup}/.karya-install.lock" "$@"
+          else
+            "$@"
+          fi
+        }
         for attempt in 1 2 3; do
-          rustup toolchain install "$TOOLCHAIN" "${args[@]}" && break
+          locked rustup toolchain install "$TOOLCHAIN" "${args[@]}" && break
           [ "$attempt" = 3 ] && exit 1
           sleep $((attempt * 10))
         done
