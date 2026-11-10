@@ -1,8 +1,10 @@
 name: Bump a downstream pin
 description: >-
   After a release, opens (or updates) a pull request in a downstream
-  repository that moves its requirement on the crate to the new version and
-  updates Cargo.lock, so the consumer's own CI checks the release. Needs the
+  repository that moves its requirement on the crate to the new version, and
+  any dependency the release pins newer that the repository also names (such
+  as GPUI Kit for a gpuicn release), and updates Cargo.lock, so the
+  consumer's own CI checks the release. Needs the
   Karya bot GitHub App (organization secrets KARYA_BOT_APP_ID and
   KARYA_BOT_PRIVATE_KEY); without them it only writes a notice.
 inputs:
@@ -77,26 +79,27 @@ runs:
         UPSTREAM: ${{ github.repository }}
       run: |
         set -euo pipefail
-        python3 - Cargo.toml "$CRATE" "$VERSION" <<'PY'
-        import re, sys
-        manifest, crate, version = sys.argv[1:]
-        text = open(manifest).read()
-        name = re.escape(crate)
-        text, plain = re.subn(
-            rf'^(\s*{name}\s*=\s*")(=?)[^"]*(")', rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
-        text, table = re.subn(
-            rf'^(\s*{name}\s*=\s*\{{[^}}\n]*\bversion\s*=\s*")(=?)[^"]*(")',
-            rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
-        if plain + table == 0:
-            sys.exit(f"No requirement on {crate} in {manifest}")
-        open(manifest, "w").write(text)
-        PY
         # The crates.io index can lag the publish by a minute or two.
+        deps="$RUNNER_TEMP/karya-bump-deps.json"
         for attempt in $(seq 1 20); do
-          cargo update -p "$CRATE" && break
+          curl -fsS -A "karyalabs-bump-downstream" \
+            "https://crates.io/api/v1/crates/$CRATE/$VERSION/dependencies" -o "$deps" && break
           [ "$attempt" = 20 ] && exit 1
           sleep 30
         done
+        # Moves the crate, and every dependency it pins that this repository
+        # also names, so the two never require different versions.
+        python3 "$GITHUB_ACTION_PATH/bump.py" Cargo.toml "$CRATE" "$VERSION" "$deps" >"$RUNNER_TEMP/karya-bump-moved"
+        mapfile -t moved <"$RUNNER_TEMP/karya-bump-moved"
+        if [ "${#moved[@]}" -gt 0 ]; then
+          update=()
+          for package in "${moved[@]}"; do update+=(-p "$package"); done
+          for attempt in $(seq 1 20); do
+            cargo update "${update[@]}" && break
+            [ "$attempt" = 20 ] && exit 1
+            sleep 30
+          done
+        fi
         if git diff --quiet; then
           echo "$REPOSITORY already uses $CRATE $VERSION"
           exit 0
@@ -109,8 +112,13 @@ runs:
         git commit -qam "Update $CRATE to $VERSION"
         git push --force origin "$branch"
         notes="https://github.com/$UPSTREAM/releases/tag/v$VERSION"
-        body="$(printf 'Moves %s to %s, released by %s.\n\nRelease notes: %s\n\nOpened by the release workflow of %s. Merge it once `ci` is green; fix any break here before the next release.\n' \
-          "\`$CRATE\`" "$VERSION" "$UPSTREAM" "$notes" "$UPSTREAM")"
+        also=""
+        for package in "${moved[@]}"; do
+          [ "$package" = "$CRATE" ] || also="$also\`$package\` "
+        done
+        [ -z "$also" ] || also="$(printf '\n\nAlso moves %sto the versions %s %s requires.' "$also" "$CRATE" "$VERSION")"
+        body="$(printf 'Moves %s to %s, released by %s.%s\n\nRelease notes: %s\n\nOpened by the release workflow of %s. Merge it once `ci` is green; fix any break here before the next release.\n' \
+          "\`$CRATE\`" "$VERSION" "$UPSTREAM" "$also" "$notes" "$UPSTREAM")"
         url="$(gh pr list --repo "$REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
         if [ -z "$url" ]; then
           url="$(gh pr create --repo "$REPOSITORY" --head "$branch" --title "Update $CRATE to $VERSION" --body "$body")"
