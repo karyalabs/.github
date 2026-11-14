@@ -4,13 +4,19 @@ description: >-
   reuses its checkout so target/ stays warm; this clears everything else a
   previous job left (untracked and ignored files outside target/, and
   target/dist so a job never uploads an older build), and drops target/ once
-  it grows past the limit. Does nothing on GitHub's runners.
+  it grows past the limit or the disk runs short. Does nothing on GitHub's
+  runners.
 inputs:
   target-max-gb:
     description: >-
       Remove target/ when it holds more than this many GB. Empty means the
       runner's KARYA_CI_TARGET_MAX_GB (set in the runner folder's .env), or
       60.
+    default: ""
+  min-free-gb:
+    description: >-
+      When the disk has less free space than this many GB, drop target/ too
+      and warn. Empty means the runner's KARYA_CI_MIN_FREE_GB, or 30.
     default: ""
 runs:
   using: composite
@@ -19,6 +25,7 @@ runs:
       shell: bash
       env:
         MAX_GB: ${{ inputs.target-max-gb }}
+        MIN_FREE_GB: ${{ inputs.min-free-gb }}
       run: |
         set -euo pipefail
         MAX_GB="${MAX_GB:-${KARYA_CI_TARGET_MAX_GB:-${MATTY_CI_TARGET_MAX_GB:-60}}}"
@@ -31,5 +38,14 @@ runs:
             echo "Removing target/ to free disk space; this build starts cold"
             rm -rf target
           fi
+        fi
+        MIN_FREE_GB="${MIN_FREE_GB:-${KARYA_CI_MIN_FREE_GB:-30}}"
+        free_gb() { df -Pk . | awk 'NR == 2 { print int($4 / 1048576) }'; }
+        if (($(free_gb) < MIN_FREE_GB)) && [[ -d target ]]; then
+          echo "Only $(free_gb) GB free (want ${MIN_FREE_GB} GB); removing target/, this build starts cold"
+          rm -rf target
+        fi
+        if (($(free_gb) < MIN_FREE_GB)); then
+          echo "::warning title=Runner disk low::$RUNNER_NAME has $(free_gb) GB free (want ${MIN_FREE_GB} GB). On a Mac, run karya-runner-cleanup --report (karyalabs/.github runner/macos)."
         fi
         df -h . | tail -n 1
