@@ -172,13 +172,13 @@ else
     wanted="$(for runner in $(runner_dirs); do
         find "$runner/_work" -maxdepth 3 -name rust-toolchain.toml 2>/dev/null
       done | xargs -I{} sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' {} | sort -u)"
-    default="$(rustup default 2>/dev/null | cut -d' ' -f1)"
+    keep="$(rustup default 2>/dev/null | cut -d' ' -f1; rustup show active-toolchain 2>/dev/null | cut -d' ' -f1)"
     # Only pinned versions and dated nightlies go; stable, beta and nightly
     # are channels someone chose on purpose.
     rustup toolchain list 2>/dev/null | cut -d' ' -f1 | while read -r toolchain; do
       channel="${toolchain%-aarch64-apple-darwin}"
       channel="${channel%-x86_64-apple-darwin}"
-      [[ $toolchain == "$default" ]] && continue
+      grep -qxF "$toolchain" <<<"$keep" && continue
       [[ $channel =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$|^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
       grep -qxF "$channel" <<<"$wanted" && continue
       log "$( [[ $mode == clean ]] && echo removing || echo 'would remove' ) Rust $toolchain: no runner checkout uses it"

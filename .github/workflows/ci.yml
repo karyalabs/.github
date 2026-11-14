@@ -86,6 +86,10 @@ jobs:
           KARYA_RUNNER_DIRS: ${{ runner.temp }}/runner
           KARYA_CLEANUP_MIN_FREE_GB: "1"
         run: |
+          # The rust-toolchain steps above pin 1.98.0 for this job; the
+          # LaunchAgent runs without that.
+          unset RUSTUP_TOOLCHAIN
+          toolchains="$HOME/.rustup/toolchains"
           runner="$KARYA_RUNNER_DIRS"
           for repo in warm stale; do
             mkdir -p "$runner/_work/$repo/$repo/.git" "$runner/_work/$repo/$repo/target/debug"
@@ -97,12 +101,12 @@ jobs:
           runner/macos/karya-runner-cleanup --report
           runner/macos/karya-runner-cleanup --dry-run
           [ -d "$runner/_work/stale/stale/target" ]
-          rustup toolchain list | grep -q '^1.98.0'
+          ls "$toolchains" | grep -q '^1.98.0-'
           runner/macos/karya-runner-cleanup
           [ -d "$runner/_work/warm/warm/target" ]
           [ ! -e "$runner/_work/stale/stale/target" ]
-          rustup toolchain list | grep -q '^1.99.1'
-          ! rustup toolchain list | grep -q '^1.98.0'
+          ls "$toolchains" | grep -q '^1.99.1-'
+          ! ls "$toolchains" | grep -q '^1.98.0-'
 
   ci:
     if: ${{ !cancelled() }}
