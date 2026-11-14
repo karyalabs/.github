@@ -24,7 +24,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Every action and workflow is valid YAML with the required keys
@@ -80,6 +80,29 @@ jobs:
           [ "$(cargo --version | cut -d' ' -f2)" = 1.98.0 ]
       - uses: ./actions/gpui-deps
       - uses: ./actions/self-hosted-prep
+      - name: The Mac runner cleanup keeps warm builds and drops stale ones
+        if: runner.os == 'macOS'
+        env:
+          KARYA_RUNNER_DIRS: ${{ runner.temp }}/runner
+          KARYA_CLEANUP_MIN_FREE_GB: "1"
+        run: |
+          runner="$KARYA_RUNNER_DIRS"
+          for repo in warm stale; do
+            mkdir -p "$runner/_work/$repo/$repo/.git" "$runner/_work/$repo/$repo/target/debug"
+            touch "$runner/_work/$repo/$repo/.git/FETCH_HEAD" "$runner/_work/$repo/$repo/target/CACHEDIR.TAG"
+          done
+          touch "$runner/.runner"
+          printf '[toolchain]\nchannel = "1.99.1"\n' > "$runner/_work/warm/warm/rust-toolchain.toml"
+          touch -t 202601010000 "$runner/_work/stale/stale/.git/FETCH_HEAD" "$runner/_work/stale/stale/target"
+          runner/macos/karya-runner-cleanup --report
+          runner/macos/karya-runner-cleanup --dry-run
+          [ -d "$runner/_work/stale/stale/target" ]
+          rustup toolchain list | grep -q '^1.98.0'
+          runner/macos/karya-runner-cleanup
+          [ -d "$runner/_work/warm/warm/target" ]
+          [ ! -e "$runner/_work/stale/stale/target" ]
+          rustup toolchain list | grep -q '^1.99.1'
+          ! rustup toolchain list | grep -q '^1.98.0'
 
   ci:
     if: ${{ !cancelled() }}

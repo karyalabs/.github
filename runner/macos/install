@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Installs karya-runner-cleanup on a self-hosted macOS runner as a LaunchAgent
+# that runs at login and every 6 hours, as the user the runners run as. No
+# sudo. Running it again updates the script and reloads the agent.
+#
+#   git clone --depth 1 https://github.com/karyalabs/.github /tmp/karya-github
+#   /tmp/karya-github/runner/macos/install
+#
+# Log: ~/Library/Logs/karya-runner-cleanup.log
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+bin="$HOME/.local/bin/karya-runner-cleanup"
+label=dev.karyalabs.runner-cleanup
+plist="$HOME/Library/LaunchAgents/$label.plist"
+logfile="$HOME/Library/Logs/karya-runner-cleanup.log"
+
+mkdir -p "$(dirname "$bin")" "$(dirname "$plist")" "$(dirname "$logfile")" "$HOME/.config/karya"
+install -m 755 "$here/karya-runner-cleanup" "$bin"
+
+cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array><string>$bin</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>21600</integer>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$logfile</string>
+  <key>StandardErrorPath</key><string>$logfile</string>
+</dict>
+</plist>
+EOF
+
+launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$plist"
+
+echo "Installed. It runs now and every 6 hours; log: $logfile"
+echo "Settings (optional): $HOME/.config/karya/runner-cleanup.env"
+echo
+"$bin" --report

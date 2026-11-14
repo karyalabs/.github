@@ -33,3 +33,25 @@ Publishing trusts the calling workflow, and composite actions keep it so.
    a `v2` branch, and each repository moves when it is ready. `v1` is a
    branch, not a tag, because cloud sessions cannot push tags here; actions
    resolve either.
+
+## Runner upkeep (macOS)
+
+`self-hosted-prep` keeps each checkout's own `target/` under its limit, but
+a Mac with several runners and repositories still fills up across them, and
+nothing else on the machine cleans the Rust caches, old toolchains or old
+runner versions. [`runner/macos`](../runner/macos) has a LaunchAgent for
+that. On the Mac, as the user the runners run as:
+
+```sh
+git clone --depth 1 https://github.com/karyalabs/.github /tmp/karya-github
+/tmp/karya-github/runner/macos/install
+```
+
+It runs at login and every 6 hours, keeps 100 GB free by dropping unused
+and then the largest `target/` folders when no job is running, and logs to
+`~/Library/Logs/karya-runner-cleanup.log`. `karya-runner-cleanup --report`
+shows where the space is; the header of
+[`karya-runner-cleanup`](../runner/macos/karya-runner-cleanup) lists what it
+removes and its settings. When a job starts with less than 30 GB free,
+`self-hosted-prep` drops that checkout's `target/` and the run shows a
+"Runner disk low" warning.
