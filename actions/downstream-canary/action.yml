@@ -72,7 +72,7 @@ runs:
         metadata, manifest, *crates = sys.argv[1:]
         packages = {p["name"]: p for p in json.load(open(metadata))["packages"]}
         text = open(manifest).read()
-        patch = ["", "# Added by the downstream canary.", "[patch.crates-io]"]
+        patch = []
         for crate in crates:
             package = packages[crate]
             version = package["version"]
@@ -87,9 +87,21 @@ runs:
                 rf"\g<1>\g<2>{version}\g<3>", text, flags=re.M)
             print(f"{crate}: {plain + table} requirement(s) set to {version}, patched to {path}")
             patch.append(f'{crate} = {{ path = "{path}" }}')
-        if "[patch.crates-io]" in text:
-            sys.exit("The downstream manifest already has [patch.crates-io]; merge by hand.")
-        open(manifest, "w").write(text.rstrip("\n") + "\n" + "\n".join(patch) + "\n")
+        # A downstream that already patches other crates (Matty patches
+        # GPUI from a fork) keeps its section; ours go at its top. Patching
+        # a crate it already patches would be ambiguous, so that stops.
+        header = re.search(r"^\[patch\.crates-io\]\s*$", text, flags=re.M)
+        if header:
+            section = text[header.end():]
+            section = section[: m.start()] if (m := re.search(r"^\[", section, flags=re.M)) else section
+            for crate in crates:
+                if re.search(rf"^\s*{re.escape(crate)}\s*=", section, flags=re.M):
+                    sys.exit(f"The downstream manifest already patches {crate}; merge by hand.")
+            lines = "\n# Added by the downstream canary.\n" + "\n".join(patch)
+            text = text[: header.end()] + lines + text[header.end():]
+        else:
+            text = text.rstrip("\n") + "\n\n# Added by the downstream canary.\n[patch.crates-io]\n" + "\n".join(patch) + "\n"
+        open(manifest, "w").write(text)
         PY
         # The build resolves the patched crates; everything else keeps its
         # locked version.
